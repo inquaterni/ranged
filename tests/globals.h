@@ -63,6 +63,8 @@ struct dispatcher {
             std::cout << ' ' << std::chrono::duration_cast<DurationT>(elapsed) << " \033[32mOK\033[0m\n";
         }
 #endif
+        std::cout << std::string(80, '-') << "\n\n";
+        std::cout << "TOTAL TESTS COUNT: \033[33m" << test_v.size() << "\033[0m\n";
         std::cout << "\033[32mPASSED\033[0m" << std::endl;
     }
 };
@@ -71,6 +73,17 @@ struct dispatcher {
     void test_suite## _## test_name(); \
     int dummy_## test_suite## _## test_name = (dispatcher(std::make_pair(#test_suite, #test_name), &test_suite## _## test_name), 0); \
     void test_suite## _## test_name()
+
+template<typename T>
+bool operator==(const std::vector<T> &lhs, const std::vector<T> &rhs) {
+    if (lhs.size() != rhs.size()) return false;
+
+    for (size_t i = 0; i < lhs.size(); i++) {
+        if (lhs[i] != rhs[i]) return false;
+    }
+
+    return true;
+}
 
 
 #endif //GLOBALS_H

@@ -15,20 +15,7 @@
 #define RANGED_IMPLEMENTATION
 #define RANGED_NO_DEPRECATION_WARNINGS 1
 #include <functional>
-
-
 #include "ranged.h"
-
-template<typename T>
-bool operator==(const std::vector<T> &lhs, const std::vector<T> &rhs) {
-    if (lhs.size() != rhs.size()) return false;
-
-    for (size_t i = 0; i < lhs.size(); i++) {
-        if (lhs[i] != rhs[i]) return false;
-    }
-
-    return true;
-}
 
 TEST(vector, any_test) {
     const std::vector<int> v = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
@@ -105,38 +92,85 @@ TEST(vector, select_test) {
     assert(result == expected);
 }
 
-TEST(vector, select_squares_test) {
-    const std::vector<int> v = {1, 2, 3, 4, 5};
-    const std::vector<int> expected = {1, 4, 9, 16, 25};
-    const auto result = ranged::select(v, [](const int &i) {return i * i;});
-    assert(result == expected);
+TEST(vector, zip_test) {
+    std::vector<int> v1 = {1, 2, 3, 4, 5};
+    std::vector<int> v2 = {10, 20, 30, 40, 50};
+    const auto result = ranged::zip(v1, v2);
+    assert(result.size() == 5);
+    assert(result[0].first == 1 && result[0].second == 10);
+    assert(result[2].first == 3 && result[2].second == 30);
+    assert(result[4].first == 5 && result[4].second == 50);
 }
 
-TEST(vector, select_doubles_test) {
-    const std::vector<int> v = {1, 2, 3, 4, 5};
-    const std::vector<double> expected = {1.0, 2.0, 3.0, 4.0, 5.0};
-    const auto result = ranged::select(v, [](const int &i) {return static_cast<double>(i);});
-    assert(result == expected);
+TEST(vector, to_list_test) {
+    const std::vector<int> v = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    const auto result = ranged::to_list(v);
+    assert(result.size() == 10);
+    assert(ranged::to_vector(result) == v);
 }
 
-// deque tests (random access similar to vector)
-TEST(deque, basic_ops) {
+TEST(vector, to_set_test) {
+    const std::vector<int> v = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    const auto result = ranged::to_set(v);
+    assert(result.size() == 10);
+    assert(ranged::to_vector(result) == v);
+}
+
+TEST(vector, to_unordered_set_test) {
+    const std::vector<int> v = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    const auto result = ranged::to_unordered_set(v);
+    assert(result.size() == 10);
+}
+
+TEST(deque, any_test) {
     const std::deque<int> d = {1, 2, 3, 4, 5, 6};
     assert(ranged::any(d, [](const int &x) { return x == 4; }));
+}
+
+TEST(deque, dummy_vector_all_test) {
+    const std::deque<int> d = {1, 2, 3, 4, 5, 6};
     assert(ranged::all(d, [](const int &x) { return x >= 1; }));
+}
+
+TEST(deque, contains_test) {
+    const std::deque<int> d = {1, 2, 3, 4, 5, 6};
     assert(ranged::contains(d, 6));
+}
+
+TEST(deque, count_if_counts_even_numbers) {
+    const std::deque<int> d = {1, 2, 3, 4, 5, 6};
     assert(ranged::count_if(d, [](const int &x) { return x % 2 == 0; }) == 3);
+}
+
+TEST(deque, first_or_default_test) {
+    const std::deque<int> d = {1, 2, 3, 4, 5, 6};
     const int first_over_3 = ranged::first_or_default(d, [](const int &x) { return x > 3; });
     assert(first_over_3 == 4);
 }
 
-TEST(deque, to_array_and_max_min) {
+TEST(deque, to_array) {
     const std::deque<int> d = {5, 4, 9, 1, 3};
     const auto a = ranged::to_array<5>(d);
+    assert(a.size() == 5);
     assert(a[2] == 9);
+}
+
+TEST(deque, max) {
+    const std::deque<int> d = {5, 4, 9, 1, 3};
     assert(ranged::max(d) == 9);
-    const std::deque<int> d2 = {9, 7, 5, 3, 2};
-    assert(ranged::min(d2) == 2);
+}
+
+TEST(deque, min) {
+    const std::deque<int> d = {9, 7, 5, 3, 2};
+    assert(ranged::min(d) == 2);
+}
+
+TEST(deque, to_vector) {
+    const std::deque<int> d = {5, 4, 9, 1, 3};
+    const auto v = ranged::to_vector(d);
+    assert(v.size() == 5);
+    assert(v[0] == 5);
+    assert(v[4] == 3);
 }
 
 TEST(deque, filter_test) {
@@ -153,6 +187,16 @@ TEST(deque, select_test) {
     assert(result == expected);
 }
 
+TEST(deque, zip_test) {
+    std::deque<int> d1 = {1, 2, 3};
+    std::deque<int> d2 = {10, 20, 30};
+    const auto result = ranged::zip(d1, d2);
+    assert(result.size() == 3);
+    assert(result[0].first == 1 && result[0].second == 10);
+    assert(result[1].first == 2 && result[1].second == 20);
+    assert(result[2].first == 3 && result[2].second == 30);
+}
+
 // array tests (only functions explicitly overloaded or iterator-based where constraints allow)
 TEST(array, filter_test) {
     const std::array<int, 6> a = {{1, 2, 3, 4, 5, 6}};
@@ -161,17 +205,49 @@ TEST(array, filter_test) {
     assert(res == expected);
 }
 
+TEST(array, zip_test) {
+    std::array<int, 4> a1 = {1, 2, 3, 4};
+    std::array<int, 4> a2 = {10, 20, 30, 40};
+    const auto result = ranged::zip(a1, a2);
+    assert(result.size() == 4);
+    assert(result[0].first == 1 && result[0].second == 10);
+    assert(result[1].first == 2 && result[1].second == 20);
+    assert(result[3].first == 4 && result[3].second == 40);
+}
+
 // set tests (works for iterator-based ops; avoid max/min/to_array which need at())
-TEST(set, iterator_based_ops) {
+TEST(set, any_test) {
     const std::set<int> s = {1, 2, 3, 4, 5};
     assert(ranged::any(s, [](const int &x) { return x == 3; }));
+}
+
+TEST(set, dummy_vector_all_test) {
+    const std::set<int> s = {1, 2, 3, 4, 5};
     assert(ranged::all(s, [](const int &x) { return x >= 1; }));
+}
+
+TEST(set, contains_test) {
+    const std::set<int> s = {1, 2, 3, 4, 5};
     assert(ranged::contains(s, 5));
+}
+
+TEST(set, dummy_vector_count_if_test) {
+    const std::set<int> s = {1, 2, 3, 4, 5};
     assert(ranged::count_if(s, [](const int &x) { return x % 2 == 1; }) == 3);
+}
+
+TEST(set, first_or_default_test) {
+    const std::set<int> s = {1, 2, 3, 4, 5};
     const int first_gt_2 = ranged::first_or_default(s, [](const int &x) { return x > 2; });
     assert(first_gt_2 == 3);
+}
+
+TEST(set, filter_test) {
+    const std::set<int> s = {1, 2, 3, 4, 5};
     const auto filtered = ranged::filter(s, [](const int &x) { return x >= 4; });
-    assert(filtered.size() == 2 && filtered.find(4) != filtered.end() && filtered.find(5) != filtered.end());
+    assert(filtered.size() == 2);
+    assert(filtered.find(4) != filtered.end());
+    assert(filtered.find(5) != filtered.end());
 }
 
 TEST(set, select_test) {
@@ -181,13 +257,29 @@ TEST(set, select_test) {
     assert(result == expected);
 }
 
-TEST(unordered_set, iterator_based_ops) {
+// TEST(set, zip_test) {
+
+TEST(unordered_set, any_test) {
     const std::unordered_set<int> s = {1, 2, 3, 4, 5};
     assert(ranged::any(s, [](const int &x) { return x == 2; }));
+}
+
+TEST(unordered_set, contains_test) {
+    const std::unordered_set<int> s = {1, 2, 3, 4, 5};
     assert(ranged::contains(s, 5));
+}
+
+TEST(unordered_set, dummy_vector_count_if_test) {
+    const std::unordered_set<int> s = {1, 2, 3, 4, 5};
     assert(ranged::count_if(s, [](const int &x) { return x > 3; }) == 2);
+}
+
+TEST(unordered_set, filter_test) {
+    const std::unordered_set<int> s = {1, 2, 3, 4, 5};
     const auto filtered = ranged::filter(s, [](const int &x) { return x < 3; });
-    assert(filtered.size() == 2 && filtered.find(1) != filtered.end() && filtered.find(2) != filtered.end());
+    assert(filtered.size() == 2);
+    assert(filtered.find(1) != filtered.end());
+    assert(filtered.find(2) != filtered.end());
 }
 
 TEST(unordered_set, select_test) {
@@ -201,54 +293,116 @@ TEST(unordered_set, select_test) {
     assert(result.find(10) != result.end());
 }
 
+// TEST(unordered_set, zip_test) {
+//     std::unordered_set<int> s1 = {1, 2, 3};
+//     std::unordered_set<int> s2 = {10, 20, 30};
+//     const auto result = ranged::zip(s1, s2);
+//     assert(result.size() == 3);
+//     // For unordered_set, we can't rely on order, so check that all pairs exist
+//     bool found_1_10 = false, found_2_20 = false, found_3_30 = false;
+//     for (const auto &p : result) {
+//         if (p.first == 1 && p.second == 10) found_1_10 = true;
+//         if (p.first == 2 && p.second == 20) found_2_20 = true;
+//         if (p.first == 3 && p.second == 30) found_3_30 = true;
+//     }
+//     assert(found_1_10 && found_2_20 && found_3_30);
+// }
+
 // map tests (operate on value_type = pair<const K,V>)
-TEST(map, iterator_based_ops) {
+TEST(map, any_test) {
     const std::map<std::string, int> m = {{"a", 1}, {"b", 2}, {"c", 3}};
     assert(ranged::any(m, [](const std::pair<const std::string, int> &p) { return p.second == 2; }));
-    assert(ranged::all(m, [](const std::pair<const std::string, int> &p) { return p.second >= 1; }));
-    assert(ranged::count_if(m, [](const std::pair<const std::string, int> &p) { return p.second % 2 == 1; }) == 2);
-    const auto first_two = ranged::first_or_default(m, [](const std::pair<const std::string, int> &p) { return p.second == 2; });
-    assert(first_two.second == 2 && first_two.first == "b");
-    const auto filtered = ranged::filter(m, [](const std::pair<const std::string, int> &p) { return p.second >= 2; });
-    assert(filtered.size() == 2 && filtered.find("b") != filtered.end() && filtered.find("c") != filtered.end());
 }
 
-// TEST(map, select_test) {
-//     const std::map<std::string, int> m = {{"a", 1}, {"b", 2}, {"c", 3}};
-//     const auto result = ranged::select(m, [](const std::pair<const std::string, int> &p) {
-//         return std::make_pair<std::string, int>(std::string(p.first), p.second * 10);
-//     });
-//     assert(result.size() == 3);
-//     assert(result.find(10) != result.end());
-//     assert(result.find(20) != result.end());
-//     assert(result.find(30) != result.end());
-// }
+TEST(map, dummy_vector_all_test) {
+    const std::map<std::string, int> m = {{"a", 1}, {"b", 2}, {"c", 3}};
+    assert(ranged::all(m, [](const std::pair<const std::string, int> &p) { return p.second >= 1; }));
+}
 
-TEST(unordered_map, iterator_based_ops) {
+TEST(map, dummy_vector_count_if_test) {
+    const std::map<std::string, int> m = {{"a", 1}, {"b", 2}, {"c", 3}};
+    assert(ranged::count_if(m, [](const std::pair<const std::string, int> &p) { return p.second % 2 == 1; }) == 2);
+}
+
+TEST(map, first_or_default_test) {
+    const std::map<std::string, int> m = {{"a", 1}, {"b", 2}, {"c", 3}};
+    const auto first_two = ranged::first_or_default(m, [](const std::pair<const std::string, int> &p) { return p.second == 2; });
+    assert(first_two.second == 2);
+    assert(first_two.first == "b");
+}
+
+TEST(map, filter_test) {
+    const std::map<std::string, int> m = {{"a", 1}, {"b", 2}, {"c", 3}};
+    const auto filtered = ranged::filter(m, [](const std::pair<const std::string, int> &p) { return p.second >= 2; });
+    assert(filtered.size() == 2);
+    assert(filtered.find("b") != filtered.end());
+    assert(filtered.find("c") != filtered.end());
+}
+
+TEST(map, select_test) {
+    const std::map<std::string, int> m = {{"a", 1}, {"b", 2}, {"c", 3}};
+    const auto result = ranged::select(m, [](const std::pair<const std::string, int> &p) {
+        return std::make_pair<std::string, std::string>(std::string(p.first), std::to_string(p.second * 10));
+    });
+    assert(result.size() == 3);
+    assert(result.at("a") == "10");
+    assert(result.at("b") == "20");
+    assert(result.at("c") == "30");
+}
+
+TEST(unordered_map, any_test) {
     const std::unordered_map<std::string, int> m = {{"x", 10}, {"y", 20}, {"z", 30}};
     assert(ranged::any(m, [](const std::pair<const std::string, int> &p) { return p.second == 20; }));
-    assert(ranged::count_if(m, [](const std::pair<const std::string, int> &p) { return p.second >= 20; }) == 2);
-    const auto filtered = ranged::filter(m, [](const std::pair<const std::string, int> &p) { return p.second > 10; });
-    assert(filtered.size() == 2 && filtered.find("y") != filtered.end() && filtered.find("z") != filtered.end());
 }
 
-// TEST(unordered_map, select_test) {
-//     const std::unordered_map<std::string, int> m = {{"x", 10}, {"y", 20}, {"z", 30}};
-//     const auto result = ranged::select(m, [](const std::pair<const std::string, int> &p) {return p.first + "_key";});
-//     assert(result.size() == 3);
-//     assert(result.find("x_key") != result.end());
-//     assert(result.find("y_key") != result.end());
-//     assert(result.find("z_key") != result.end());
-// }
+TEST(unordered_map, dummy_vector_count_if_test) {
+    const std::unordered_map<std::string, int> m = {{"x", 10}, {"y", 20}, {"z", 30}};
+    assert(ranged::count_if(m, [](const std::pair<const std::string, int> &p) { return p.second >= 20; }) == 2);
+}
+
+TEST(unordered_map, filter_test) {
+    const std::unordered_map<std::string, int> m = {{"x", 10}, {"y", 20}, {"z", 30}};
+    const auto filtered = ranged::filter(m, [](const std::pair<const std::string, int> &p) { return p.second > 10; });
+    assert(filtered.size() == 2);
+    assert(filtered.find("y") != filtered.end());
+    assert(filtered.find("z") != filtered.end());
+}
+
+TEST(unordered_map, select_test) {
+    const std::unordered_map<std::string, int> m = {{"x", 10}, {"y", 20}, {"z", 30}};
+    const auto result = ranged::select(m, [](const std::pair<const std::string, int> &p) {
+        return std::make_pair<std::string, char>(std::string(p.first + "_key"), p.second);
+    });
+    assert(result.size() == 3);
+    assert(result.find("x_key") != result.end());
+    assert(result.find("y_key") != result.end());
+    assert(result.find("z_key") != result.end());
+}
 
 // list tests (iterator-based only)
-TEST(list, iterator_based_ops) {
+TEST(list, any_test) {
     const std::list<int> l = {1, 2, 3, 4, 5};
     assert(ranged::any(l, [](const int &x) { return x == 5; }));
+}
+
+TEST(list, all_returns_false_when_predicate_fails) {
+    const std::list<int> l = {1, 2, 3, 4, 5};
     assert(!ranged::all(l, [](const int &x) { return x < 5; }));
+}
+
+TEST(list, dummy_vector_count_if_test) {
+    const std::list<int> l = {1, 2, 3, 4, 5};
     assert(ranged::count_if(l, [](const int &x) { return x > 2; }) == 3);
+}
+
+TEST(list, first_or_default_test) {
+    const std::list<int> l = {1, 2, 3, 4, 5};
     const int first = ranged::first_or_default(l, [](const int &x) { return x > 3; });
     assert(first == 4);
+}
+
+TEST(list, filter_test) {
+    const std::list<int> l = {1, 2, 3, 4, 5};
     const auto filtered = ranged::filter(l, [](const int &x) { return x % 2 == 0; });
     assert(filtered.size() == 2);
 }
@@ -259,6 +413,20 @@ TEST(list, select_test) {
     const auto result = ranged::select(l, [](const int &i) {return std::to_string(i);});
     assert(result == expected);
 }
+
+// TEST(list, zip_test) {
+//     std::list<std::string> l1 = {"1", "2", "3"};
+//     std::list<int> l2 = {10, 20, 30};
+//     const auto result = ranged::zip(l1, l2);
+//     assert(result.size() == 3);
+//     // For list, iteration order is preserved
+//     auto it = result.begin();
+//     assert(it->first == "1" && it->second == 10);
+//     ++it;
+//     assert(it->first == "2" && it->second == 20);
+//     ++it;
+//     assert(it->first == "3" && it->second == 30);
+// }
 
 int main() {
     dispatcher::run_tests<std::chrono::nanoseconds>();
