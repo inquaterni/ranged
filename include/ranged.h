@@ -6,9 +6,9 @@
 #define RANGED_H
 #include <algorithm>
 #include <cstddef>
-#include <ranged.h>
 #include <utility>
 #include <vector>
+#include <functional>
 
 #ifndef RANGED_NO_DEPRECATION_WARNINGS
 #define RANGED_NO_DEPRECATION_WARNINGS 0
@@ -19,17 +19,30 @@ namespace ranged {
 #if __cplusplus >= 202002L
     template<typename T>
     concept _std_container_ = requires(T a) {
-        typename T::value_type;
-        typename T::allocator_type;
-        typename T::size_type;
         typename T::iterator;
-        typename T::const_iterator;
+        typename T::value_type;
+        typename T::difference_type;
+        typename T::pointer;
+        typename T::reference;
     };
 #else
-#define _std_container_ typename
+#define _std_container_ class
 #endif
 
     namespace _decl {
+
+        // c++14's possible `std::exchange` implementation for c++11, see: https://en.cppreference.com/w/cpp/utility/exchange.html
+        // TODO: replace all occurrences of this function for `std::exchange` for c++14 and newer
+        template<class T, class U = T>
+        constexpr T exchange(T& obj, U&& new_value) noexcept (
+            std::is_nothrow_move_constructible<U>::value &&
+            std::is_nothrow_assignable<T&, U>::value
+        )
+        {
+            T tmp = std::move(obj);
+            obj = std::forward<U>(new_value);
+            return tmp;
+        }
 
         template<class T>
         struct more;
@@ -48,12 +61,35 @@ namespace ranged {
         template<typename T>
         struct has_pair_types_impl<T, void_t<typename T::first_type, typename T::second_type>> : std::true_type {};
 
+        template<typename T, typename = void>
+        struct has_reserve : std::false_type {};
+
         template<typename T>
-#if __cplusplus >= 201402L
+        struct has_reserve<T, void_t<decltype(std::declval<T>().reserve(1))>> : std::true_type {};
+
+        template<typename T>
+#if __cplusplus >= 201304L
         struct has_pair_types : has_pair_types_impl<std::decay_t<T>> {};
 #else
         struct has_pair_types : has_pair_types_impl<typename std::decay<T>::type> {};
 #endif
+
+        template<typename T>
+        struct function_traits : function_traits<decltype(&std::decay<T>::type::operator())> {};
+
+        template<typename ReturnT, typename... Args>
+        struct function_traits<ReturnT(Args...)> {
+            using signature = ReturnT(Args...);
+        };
+        template<typename ReturnT, typename... Args>
+        struct function_traits<ReturnT(*)(Args...)> : function_traits<ReturnT(Args...)> {};
+        template<typename ClassT, typename ReturnT, typename... Args>
+        struct function_traits<ReturnT(ClassT::*)(Args...)> : function_traits<ReturnT(Args...)> {};
+        template<typename ClassT, typename ReturnT, typename... Args>
+        struct function_traits<ReturnT(ClassT::*)(Args...) const> : function_traits<ReturnT(Args...)> {};
+
+        template<typename T>
+        using function_traits_s = typename function_traits<T>::signature;
 
         template<typename Iter, typename Pred>
         class filter_iterator {
@@ -63,22 +99,58 @@ namespace ranged {
             using difference_type = typename std::iterator_traits<Iter>::difference_type;
             using pointer = typename std::iterator_traits<Iter>::pointer;
             using reference = typename std::iterator_traits<Iter>::reference;
-#if __cplusplus >= 201402L
+#if __cplusplus >= 201304L
             using base_iterator = std::decay_t<Iter>;
 #else
-            using base_iterator = typename std::remove_const<typename std::remove_reference<Iter>::type>::type;
+            using base_iterator = typename std::decay<Iter>::type;
 #endif
+            using function_type = std::function<function_traits_s<Pred>>;
 
             filter_iterator() = default;
 
+            filter_iterator(const filter_iterator &other) noexcept(
+                std::is_nothrow_copy_constructible<base_iterator>::value
+                ): current_(other.current_), end_(other.end_), pred_(other.pred_) {}
+            filter_iterator& operator=(const filter_iterator &other) noexcept(
+                std::is_nothrow_copy_assignable<base_iterator>::value) {
+                if (&other != this) {
+                    current_ = other.current_;
+                    end_ = other.end_;
+                    pred_ = other.pred_;
+                }
+
+                return *this;
+            };
+
+            filter_iterator(filter_iterator &&rhs) noexcept(
+                std::is_nothrow_move_constructible<base_iterator>::value &&
+                std::is_default_constructible<base_iterator>::value
+                ): current_(exchange(rhs.current_, base_iterator {})), end_(exchange(rhs.end_, base_iterator {})), pred_(exchange(rhs.pred_, function_type {})) {}
+
+            filter_iterator &operator=(filter_iterator &&rhs) noexcept(
+                std::is_nothrow_move_assignable<base_iterator>::value &&
+                std::is_default_constructible<base_iterator>::value
+                )
+            {
+                if (&rhs != this) {
+                    current_ = exchange(rhs.current_, base_iterator {});
+                    end_ = exchange(rhs.end_, base_iterator {});
+                    pred_ = exchange(rhs.pred_, function_type {});
+                }
+
+                return *this;
+            }
+
             template<typename I1, typename I2>
-            filter_iterator(I1 &&begin, I2 &&end, Pred pred) noexcept :
-                current_(std::forward<I1>(begin)), end_(std::forward<I2>(end)), pred_(pred) {
+            filter_iterator(I1 &&begin, I2 &&end, const Pred &pred) noexcept (
+                std::is_nothrow_move_constructible<I1>::value &&
+                std::is_nothrow_move_constructible<I2>::value
+                ) : current_(begin), end_(end), pred_(pred) {
                 satisfy();
             }
 
             constexpr reference operator*() const noexcept { return *current_; }
-            constexpr pointer operator->() const noexcept { return &(*current_); }
+            constexpr pointer operator->() const = delete;
 
             filter_iterator &operator++() {
                 ++current_;
@@ -107,9 +179,9 @@ namespace ranged {
                 }
             }
 
-            base_iterator current_{};
-            base_iterator end_{};
-            Pred pred_;
+            base_iterator current_;
+            base_iterator end_;
+            function_type pred_;
         };
         template<typename Range, typename Pred>
         class filter {
@@ -121,11 +193,30 @@ namespace ranged {
             using pointer = typename std::iterator_traits<iterator>::pointer;
             using reference = typename std::iterator_traits<iterator>::reference;
 
-            filter(Range &range, Pred pred) noexcept :
-                begin_it(std::begin(range), std::end(range), pred), end_it(std::end(range), std::end(range), pred) {}
+            filter() = default;
 
-            iterator begin() { return begin_it; }
-            iterator end() { return end_it; }
+            filter(const filter&) = delete;
+            filter &operator=(const filter&) = delete;
+
+            filter(filter &&rhs) noexcept : begin_it(rhs.begin_it), end_it(rhs.end_it) {};
+            filter &operator=(filter &&rhs) noexcept {
+                if (&rhs != this) {
+                    begin_it = rhs.begin_it;
+                    end_it = rhs.end_it;
+                }
+
+                return *this;
+            };
+
+            filter(Range &range, const Pred &pred) noexcept:
+                begin_it(std::begin(range), std::end(range), pred), end_it(std::end(range), std::end(range), pred) {}
+            filter(Range &&range, const Pred &pred) noexcept (
+                std::is_nothrow_move_constructible<Range>::value &&
+                std::is_default_constructible<Range>::value
+                ): begin_it(std::begin(range), std::end(range), pred), end_it(std::end(range), std::end(range), pred) {}
+
+            iterator& begin() { return begin_it; }
+            iterator& end() { return end_it; }
             iterator begin() const { return begin_it; }
             iterator end() const { return end_it; }
 
@@ -139,28 +230,68 @@ namespace ranged {
         class transform_iterator {
         public:
             using iterator_category = std::forward_iterator_tag;
-#if __cplusplus >= 201402L
+#if __cplusplus >= 201304L
             using value_type = std::result_of_t<Pred(typename std::iterator_traits<Iter>::value_type)>;
 #else
             using value_type = typename std::result_of<Pred(typename std::iterator_traits<Iter>::value_type)>::type;
 #endif
             using difference_type = typename std::iterator_traits<Iter>::difference_type;
             using pointer = value_type *;
-            using reference = value_type &;
-#if __cplusplus >= 201402L
-            using ibase_iterator = std::decay_t<Iter>;
+            using reference = value_type;
+#if __cplusplus >= 201304L
+            using base_iterator = std::decay_t<Iter>;
 #else
-            using ibase_iterator = typename std::decay<Iter>::type;
+            using base_iterator = typename std::decay<Iter>::type;
 #endif
+            using function_type = std::function<function_traits_s<Pred>>;
 
             transform_iterator() = default;
 
+            transform_iterator(const transform_iterator &other) noexcept (
+                std::is_nothrow_copy_constructible<base_iterator>::value
+                ) : current_(other.current_), end_(other.end_), pred_(other.pred_) {};
+            transform_iterator &operator=(const transform_iterator &other) noexcept (
+                std::is_nothrow_copy_assignable<base_iterator>::value
+                ) {
+                if (&other != this) {
+                    current_ = other.current_;
+                    end_ = other.end_;
+                    pred_ = other.pred_;
+                }
+
+                return *this;
+            }
+
+            transform_iterator(transform_iterator &&other) noexcept (
+                std::is_nothrow_move_constructible<base_iterator>::value &&
+                std::is_default_constructible<base_iterator>::value
+                ) : current_(exchange(other.current_, base_iterator {})), end_(exchange(other.end_, base_iterator {})), pred_(exchange(other.pred_, function_type {})) {};
+            transform_iterator &operator=(transform_iterator &&other) noexcept (
+                std::is_nothrow_move_assignable<base_iterator>::value &&
+                std::is_default_constructible<base_iterator>::value
+                ) {
+                if (&other != this) {
+                    current_ = exchange(other.current_, base_iterator {});
+                    end_ = exchange(other.end_, base_iterator {});
+                    pred_ = exchange(other.pred_, function_type {});
+                }
+
+                return *this;
+            }
+
             template<typename I1, typename I2>
-            transform_iterator(I1 &&begin, I2 &&end, Pred pred) noexcept :
-                current_(std::forward<I1>(begin)), end_(std::forward<I2>(end)), pred_(pred) {}
+            transform_iterator(I1 &&begin, I2 &&end, const Pred &pred) noexcept (
+                std::is_nothrow_move_constructible<I1>::value && std::is_nothrow_move_assignable<I2>::value &&
+                std::is_default_constructible<I1>::value && std::is_default_constructible<I2>::value
+                ) :
+#if __cplusplus >= 201304L
+                current_(std::exchange(begin, I1 {})), end_(std::exchange(end, I2 {})), pred_(pred) {}
+#else
+                current_(exchange(begin, I1 {})), end_(exchange(end, I2 {})), pred_(pred) {}
+#endif
 
             constexpr value_type operator*() const noexcept { return pred_(*current_); }
-            constexpr pointer operator->() const noexcept { return &pred_(*current_); }
+            constexpr pointer operator->() const = delete;
 
             transform_iterator &operator++() {
                 ++current_;
@@ -182,9 +313,9 @@ namespace ranged {
             }
 
         private:
-            ibase_iterator current_{};
-            ibase_iterator end_{};
-            Pred pred_;
+            base_iterator current_;
+            base_iterator end_;
+            function_type pred_;
         };
         template<typename Range, typename Pred>
         class transform {
@@ -196,11 +327,30 @@ namespace ranged {
             using pointer = typename std::iterator_traits<iterator>::pointer;
             using reference = typename std::iterator_traits<iterator>::reference;
 
-            transform(Range &range, Pred pred) noexcept :
-                begin_it(std::begin(range), std::end(range), pred), end_it(std::end(range), std::end(range), pred) {}
+            transform() = default;
 
-            iterator begin() { return begin_it; }
-            iterator end() { return end_it; }
+            transform(const transform&) = delete;
+            transform &operator=(const transform&) = delete;
+
+            transform(transform &&rhs) noexcept : begin_it(rhs.begin_it), end_it(rhs.end_it) {};
+            transform &operator=(transform &&rhs) noexcept {
+                if (&rhs != this) {
+                    begin_it = rhs.begin_it;
+                    end_it = rhs.end_it;
+                }
+
+                return *this;
+            };
+
+            transform(Range &range, const Pred &pred) noexcept:
+                begin_it(std::begin(range), std::end(range), pred), end_it(std::end(range), std::end(range), pred) {}
+            transform(Range &&range, const Pred &pred) noexcept (
+                std::is_nothrow_move_constructible<Range>::value &&
+                std::is_default_constructible<Range>::value
+                ): begin_it(std::begin(range), std::end(range), pred), end_it(std::end(range), std::end(range), pred) {}
+
+            iterator& begin() { return begin_it; }
+            iterator& end() { return end_it; }
             iterator begin() const { return begin_it; }
             iterator end() const { return end_it; }
 
@@ -221,7 +371,7 @@ namespace ranged {
             using difference_type = std::ptrdiff_t;
             using pointer = void;
             using reference = std::tuple<first_type_ref, second_type_ref>;
-#if __cplusplus >= 201402L
+#if __cplusplus >= 201304L
             using base_iterator1 = std::decay_t<I1>;
             using base_iterator2 = std::decay_t<I2>;
 #else
@@ -231,8 +381,15 @@ namespace ranged {
 
             zip_iterator() = default;
 
-            zip_iterator(I1 &&begin1, I2 &&begin2, I1 &&end1, I2 &&end2) noexcept :
-                current_1(std::forward<I1>(begin1)), current_2(std::forward<I2>(begin2)), end_1(std::forward<I1>(end1)), end_2(std::forward<I2>(end2)) {
+            zip_iterator(I1 &&begin1, I2 &&begin2, I1 &&end1, I2 &&end2) noexcept (
+                std::is_nothrow_move_constructible<base_iterator1>::value && std::is_nothrow_move_constructible<base_iterator2>::value &&
+                std::is_default_constructible<base_iterator1>::value && std::is_default_constructible<base_iterator2>::value
+                ):
+#if __cplusplus >= 201304L
+                current_1(std::exchange(begin1, base_iterator1 {})), current_2(std::exchange(begin2, base_iterator2 {})), end_1(std::exchange(end1, base_iterator1 {})), end_2(std::exchange(end2, base_iterator2 {})) {
+#else
+                current_1(exchange(begin1, base_iterator1 {})), current_2(exchange(begin2, base_iterator2 {})), end_1(exchange(end1, base_iterator1 {})), end_2(exchange(end2, base_iterator2 {})) {
+#endif
             }
 
             constexpr reference operator*() const noexcept { return std::tie(*current_1, *current_2); }
@@ -251,18 +408,18 @@ namespace ranged {
             }
 
             constexpr friend bool operator==(const zip_iterator &lhs, const zip_iterator &rhs) {
-                return lhs.current_1 == rhs.current_1 && lhs.current_2 == rhs.current_2;
+                return lhs.current_1 == rhs.current_1 || lhs.current_2 == rhs.current_2;
             }
 
             constexpr friend bool operator!=(const zip_iterator &lhs, const zip_iterator &rhs) {
-                return lhs.current_1 != rhs.current_1 || lhs.current_2 != rhs.current_2;
+                return lhs.current_1 != rhs.current_1 && lhs.current_2 != rhs.current_2;
             }
 
         private:
-            base_iterator1 current_1{};
-            base_iterator2 current_2{};
-            base_iterator1 end_1{};
-            base_iterator2 end_2{};
+            base_iterator1 current_1;
+            base_iterator2 current_2;
+            base_iterator1 end_1;
+            base_iterator2 end_2;
         };
 
         template<typename R1, typename R2>
@@ -276,11 +433,19 @@ namespace ranged {
             using pointer = typename std::iterator_traits<iterator>::pointer;
             using reference = typename std::iterator_traits<iterator>::reference;
 
+            zip() = default;
+
             zip(R1 &first_range, R2 &second_range) noexcept:
                 begin_it(std::begin(first_range), std::begin(second_range), std::end(first_range), std::end(second_range)), end_it(std::end(first_range), std::end(second_range), std::end(first_range), std::end(second_range)) {}
 
-            iterator begin() { return begin_it; }
-            iterator end() { return end_it; }
+            zip(R1 &&first_range, R2 &&second_range) noexcept (
+                std::is_default_constructible<R1>::value &&
+                std::is_default_constructible<R2>::value
+                ) : begin_it(std::begin(first_range), std::begin(second_range), std::end(first_range), std::end(second_range)), end_it(std::end(first_range), std::end(second_range), std::end(first_range), std::end(second_range)) {}
+
+
+            iterator& begin() { return begin_it; }
+            iterator& end() { return end_it; }
             iterator begin() const { return begin_it; }
             iterator end() const { return end_it; }
 
@@ -372,6 +537,9 @@ namespace ranged {
     constexpr typename T::value_type min(const T &container, const Compare &cmp = {});
     template<_std_container_ T, typename Compare = _decl::more<typename T::value_type>>
     constexpr typename T::value_type min(T &container, const Compare &cmp = {});
+
+    template<_std_container_ T, class Inserter = std::conditional<_decl::has_reserve<T>::value, std::back_insert_iterator<T>, std::insert_iterator<T>>, typename ...Args>
+    constexpr void emplace_range(T &container, Args &&...args);
 
     template<_std_container_ T, typename Pred>
     constexpr _decl::filter<T, Pred> filter(T &container, Pred func);
@@ -587,7 +755,7 @@ namespace ranged {
 #if __cplusplus >= 202002L
         auto [in_it, out_it] = std::ranges::copy_if(array, result.begin(), pred);
         result.resize(std::distance(result.begin(), out_it));
-#elif __cplusplus >= 201402L
+#elif __cplusplus >= 201304L
         size_t i{0};
         for (size_t j{0}; j < N; ++j) {
             if (pred(array.at(j))) {
@@ -711,6 +879,10 @@ namespace ranged {
         }
 
         return result;
+    }
+    template<class T, class Inserter, typename... Args>
+    constexpr void emplace_range(T &container, Args &&...args) {
+        std::copy(std::begin(args...), std::end(args...), Inserter{container});
     }
 
 #endif

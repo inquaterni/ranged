@@ -77,10 +77,16 @@ TEST(vector, min_test_descending_input) {
     assert(m == 1);
 }
 
+bool func(const int&) {
+    return true;
+}
 TEST(vector, filter_test) {
     const std::vector<int> v = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
     const std::vector<int> expected = {6, 7, 8, 9, 10};
     const auto result = ranged::to<std::vector>(ranged::filter(v, [](const int &i) { return i > 5; }));
+
+    ranged::filter(ranged::filter(v, func), [] (const int &i) { return i > 5; });
+
     assert(result == expected);
 }
 
@@ -430,8 +436,6 @@ TEST(list, zip_test) {
     ++it;
     assert(std::get<0>(*it) == "3" && std::get<1>(*it) == 30);
 }
-
-std::string create_string() { return "temporary"; }
 
 int main() {
     dispatcher::run_tests<std::chrono::nanoseconds>();
