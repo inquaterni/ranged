@@ -26,84 +26,205 @@ namespace ranged {
         typename T::reference;
     };
 #else
-#define _std_container_ class
+#define std_container class
 #endif
 
-    namespace _decl {
+    // c++14's possible `std::exchange` implementation for c++11, see: https://en.cppreference.com/w/cpp/utility/exchange.html
+    // TODO: replace all occurrences of this function for `std::exchange` for c++14 and newer
+    template<class T, class U = T>
+    constexpr T exchange(T& obj, U&& new_value) noexcept (
+        std::is_nothrow_move_constructible<U>::value &&
+        std::is_nothrow_assignable<T&, U>::value
+    )
+    {
+        T tmp = std::move(obj);
+        obj = std::forward<U>(new_value);
+        return tmp;
+    }
 
-        // c++14's possible `std::exchange` implementation for c++11, see: https://en.cppreference.com/w/cpp/utility/exchange.html
-        // TODO: replace all occurrences of this function for `std::exchange` for c++14 and newer
-        template<class T, class U = T>
-        constexpr T exchange(T& obj, U&& new_value) noexcept (
-            std::is_nothrow_move_constructible<U>::value &&
-            std::is_nothrow_assignable<T&, U>::value
-        )
-        {
-            T tmp = std::move(obj);
-            obj = std::forward<U>(new_value);
-            return tmp;
-        }
+    template<class T>
+    struct more;
 
-        template<class T>
-        struct more;
+    template<class T = void>
+    struct more {
+        constexpr bool operator()(const T &lhs, const T &rhs) const { return lhs > rhs; };
+    };
 
-        template<class T = void>
-        struct more {
-            constexpr bool operator()(const T &lhs, const T &rhs) const { return lhs > rhs; };
-        };
+    template<typename... Args>
+    using void_t = void;
 
-        template<typename... Args>
-        using void_t = void;
+    template<typename T, typename = void>
+    struct has_pair_types_impl : std::false_type {};
+    template<typename T>
+    struct has_pair_types_impl<T, void_t<typename T::first_type, typename T::second_type>> : std::true_type {};
 
-        template<typename T, typename = void>
-        struct has_pair_types_impl : std::false_type {};
+    template<typename T, typename = void>
+    struct has_reserve : std::false_type {};
+    template<typename T>
+    struct has_reserve<T, void_t<decltype(std::declval<T>().reserve(1))>> : std::true_type {};
+    template<typename T, typename = void>
+    struct has_index_read : std::false_type {};
+    template<typename T>
+    struct has_index_read<T, void_t<decltype(std::declval<T>().operator[](0))>> : std::true_type {};
+    template<typename T, typename = void>
+    struct has_emplace_back : std::false_type {};
+    template<typename T>
+    struct has_emplace_back<T, void_t<decltype(std::declval<T>().emplace_back(std::declval<typename T::value_type>()))>> : std::true_type {};
+    template<typename T, typename = void>
+    struct is_empty : std::false_type {};
+    template<typename T>
+    struct is_empty<T, void_t<decltype(std::declval<T>().empty(std::declval<typename T::value_type&&>()))>> : std::true_type {};
+    template<typename T, typename = void>
+    struct sized : std::false_type {};
+    template<typename T>
+    struct sized<T, void_t<decltype(std::declval<T>().size())>> : std::true_type {};
 
-        template<typename T>
-        struct has_pair_types_impl<T, void_t<typename T::first_type, typename T::second_type>> : std::true_type {};
-
-        template<typename T, typename = void>
-        struct has_reserve : std::false_type {};
-
-        template<typename T>
-        struct has_reserve<T, void_t<decltype(std::declval<T>().reserve(1))>> : std::true_type {};
-
-        template<typename T>
+    template<typename T>
 #if __cplusplus >= 201304L
-        struct has_pair_types : has_pair_types_impl<std::decay_t<T>> {};
+    struct has_pair_types : has_pair_types_impl<std::decay_t<T>> {};
 #else
-        struct has_pair_types : has_pair_types_impl<typename std::decay<T>::type> {};
+    struct has_pair_types : has_pair_types_impl<typename std::decay<T>::type> {};
 #endif
 
-        template<typename T>
-        struct function_traits : function_traits<decltype(&std::decay<T>::type::operator())> {};
+    template<typename T>
+    struct function_traits : function_traits<decltype(&std::decay<T>::type::operator())> {};
 
-        template<typename ReturnT, typename... Args>
-        struct function_traits<ReturnT(Args...)> {
-            using signature = ReturnT(Args...);
+    template<typename ReturnT, typename... Args>
+    struct function_traits<ReturnT(Args...)> {
+        using signature = ReturnT(Args...);
+        using return_type = ReturnT;
+        // using arguments = std::tuple<Args...>;
+    };
+    template<typename ReturnT, typename... Args>
+    struct function_traits<ReturnT(*)(Args...)> : function_traits<ReturnT(Args...)> {};
+    template<typename ClassT, typename ReturnT, typename... Args>
+    struct function_traits<ReturnT(ClassT::*)(Args...)> : function_traits<ReturnT(Args...)> {};
+    template<typename ClassT, typename ReturnT, typename... Args>
+    struct function_traits<ReturnT(ClassT::*)(Args...) const> : function_traits<ReturnT(Args...)> {};
+
+    template<typename T>
+    using function_traits_s = typename function_traits<T>::signature;
+    template<typename T>
+    using function_traits_rt = typename function_traits<T>::return_type;
+
+    template<typename Pred>
+    using is_bool_predicate = std::is_same<function_traits_rt<Pred>, bool>;
+
+    namespace views {
+        template<typename R>
+        class owning_view {
+        public:
+            static_assert(std::is_object<R>::value, "Template parameter `R` must be an object type");
+            static_assert(std::is_move_constructible<R>::value, "Template parameter `R` must be move constructible");
+            static_assert(std::is_default_constructible<R>::value, "Template parameter `R` must be default constructible");
+
+            using iterator = typename std::decay<R>::type::iterator;
+            using const_iterator = typename std::decay<R>::type::const_iterator;
+            using size_type = typename std::decay<R>::type::size_type;
+
+            owning_view() noexcept : _r() {};
+            ~owning_view() = default;
+            owning_view(owning_view&& other) noexcept : _r(exchange(other._r, R {})) {};
+            owning_view& operator=(owning_view&& other) = default;
+
+            owning_view(const owning_view&) = delete;
+            owning_view& operator=(const owning_view&) = delete;
+
+            explicit owning_view(R&& t) noexcept: _r {exchange(t, R {})} {}
+
+            R &base() & noexcept { return _r; }
+            constexpr const R &base() const & noexcept { return this->_r; }
+            constexpr R &&base() && noexcept { return std::move(_r); }
+
+            iterator begin() noexcept { return _r.begin(); }
+            iterator end() noexcept { return _r.end(); }
+
+            const_iterator begin() const noexcept { return _r.begin(); }
+            const_iterator end() const noexcept { return _r.end(); }
+
+            constexpr bool empty() const noexcept { return is_empty<R>::value; }
+            bool empty() noexcept { return is_empty<R>::value; }
+
+            size_type size() noexcept (
+                sized<R>::value
+            ) {
+                return std::distance(std::move(this->_r.begin()), std::move(this->_r.end()));
+            }
+            constexpr size_type size() const noexcept (
+                sized<R>::value
+            ) {
+                return std::distance(std::move(this->_r.begin()), std::move(this->_r.end()));
+            }
+
+        protected:
+            R _r;
         };
-        template<typename ReturnT, typename... Args>
-        struct function_traits<ReturnT(*)(Args...)> : function_traits<ReturnT(Args...)> {};
-        template<typename ClassT, typename ReturnT, typename... Args>
-        struct function_traits<ReturnT(ClassT::*)(Args...)> : function_traits<ReturnT(Args...)> {};
-        template<typename ClassT, typename ReturnT, typename... Args>
-        struct function_traits<ReturnT(ClassT::*)(Args...) const> : function_traits<ReturnT(Args...)> {};
+        template<typename R>
+        class ref_view {
+        public:
+            static_assert(std::is_object<R>::value, "Template parameter `R` must be an object type");
 
-        template<typename T>
-        using function_traits_s = typename function_traits<T>::signature;
+            using iterator = typename std::decay<R>::type::iterator;
+            using const_iterator = typename std::decay<R>::type::const_iterator;
+            using size_type = typename std::decay<R>::type::size_type;
+
+            ref_view() noexcept : _r(nullptr) {}
+
+            template<typename T>
+            constexpr explicit ref_view(T& t) noexcept(
+                std::is_convertible<T, R&>::value
+                ) : _r(std::addressof(static_cast<R&>(std::forward<T>(t)))) {}
+
+            constexpr explicit ref_view(R* t) noexcept : _r(t) {}
+
+
+            ref_view(const ref_view&) = default;
+            ref_view& operator=(const ref_view&) = default;
+            ref_view(ref_view&&) = default;
+            ref_view& operator=(ref_view&&) = default;
+            ~ref_view() = default;
+
+            constexpr R& base() const noexcept {
+                assert(_r != nullptr);
+                return *_r;
+            }
+
+            iterator begin() const noexcept {
+                assert(_r != nullptr);
+                return _r->begin();
+            }
+            iterator end() const noexcept {
+                assert(_r != nullptr);
+                return _r->end();
+            }
+
+            constexpr bool empty() const noexcept {
+                assert(_r != nullptr);
+                return _r->empty();
+            }
+
+            size_type size() const noexcept {
+                assert(_r != nullptr);
+                return _r->size();
+            }
+
+        protected:
+            R* _r;
+        };
 
         template<typename Iter, typename Pred>
         class filter_iterator {
         public:
-            using iterator_category = std::forward_iterator_tag;
-            using value_type = typename std::iterator_traits<Iter>::value_type;
-            using difference_type = typename std::iterator_traits<Iter>::difference_type;
-            using pointer = typename std::iterator_traits<Iter>::pointer;
-            using reference = typename std::iterator_traits<Iter>::reference;
 #if __cplusplus >= 201304L
             using base_iterator = std::decay_t<Iter>;
 #else
             using base_iterator = typename std::decay<Iter>::type;
 #endif
+            using iterator_category = std::forward_iterator_tag;
+            using value_type = typename std::iterator_traits<base_iterator>::value_type;
+            using difference_type = typename std::iterator_traits<base_iterator>::difference_type;
+            using pointer = typename std::iterator_traits<base_iterator>::pointer;
+            using reference = typename std::iterator_traits<base_iterator>::reference;
             using function_type = std::function<function_traits_s<Pred>>;
 
             filter_iterator() = default;
@@ -125,7 +246,12 @@ namespace ranged {
             filter_iterator(filter_iterator &&rhs) noexcept(
                 std::is_nothrow_move_constructible<base_iterator>::value &&
                 std::is_default_constructible<base_iterator>::value
-                ): current_(exchange(rhs.current_, base_iterator {})), end_(exchange(rhs.end_, base_iterator {})), pred_(exchange(rhs.pred_, function_type {})) {}
+                ):
+#if __cplusplus >= 201304L
+            current_(std::exchange(rhs.current_, base_iterator {})), end_(std::exchange(rhs.end_, base_iterator {})), pred_(std::exchange(rhs.pred_, function_type {})) {}
+#else
+            current_(exchange(rhs.current_, base_iterator {})), end_(exchange(rhs.end_, base_iterator {})), pred_(exchange(rhs.pred_, function_type {})) {}
+#endif
 
             filter_iterator &operator=(filter_iterator &&rhs) noexcept(
                 std::is_nothrow_move_assignable<base_iterator>::value &&
@@ -133,19 +259,22 @@ namespace ranged {
                 )
             {
                 if (&rhs != this) {
+#if __cplusplus >= 201304L
+                    current_ = std::exchange(rhs.current_, base_iterator {});
+                    end_ = std::exchange(rhs.end_, base_iterator {});
+                    pred_ = std::exchange(rhs.pred_, function_type {});
+#else
                     current_ = exchange(rhs.current_, base_iterator {});
                     end_ = exchange(rhs.end_, base_iterator {});
                     pred_ = exchange(rhs.pred_, function_type {});
+#endif
                 }
 
                 return *this;
             }
 
-            template<typename I1, typename I2>
-            filter_iterator(I1 &&begin, I2 &&end, const Pred &pred) noexcept (
-                std::is_nothrow_move_constructible<I1>::value &&
-                std::is_nothrow_move_constructible<I2>::value
-                ) : current_(begin), end_(end), pred_(pred) {
+            filter_iterator(base_iterator begin, base_iterator end, const function_type &pred) noexcept :
+            current_(begin), end_(end), pred_(pred) {
                 satisfy();
             }
 
@@ -183,46 +312,93 @@ namespace ranged {
             base_iterator end_;
             function_type pred_;
         };
+
         template<typename Range, typename Pred>
-        class filter {
+        class filter_view : public owning_view<Range> {
         public:
-            using IteratorType = decltype(std::begin(std::declval<Range &>()));
-            using iterator = filter_iterator<IteratorType, Pred>;
+            using range_iterator_type = typename std::decay<Range>::type::iterator;
+            using range_const_iterator_type = typename std::decay<Range>::type::const_iterator;
+            using iterator = filter_iterator<range_iterator_type, Pred>;
+            using const_iterator = filter_iterator<range_const_iterator_type, Pred>;
             using value_type = typename std::iterator_traits<iterator>::value_type;
             using difference_type = typename std::iterator_traits<iterator>::difference_type;
             using pointer = typename std::iterator_traits<iterator>::pointer;
             using reference = typename std::iterator_traits<iterator>::reference;
+            using function_type = std::function<function_traits_s<Pred>>;
 
-            filter() = default;
+            filter_view() noexcept: owning_view<Range>(), _pred() {};
 
-            filter(const filter&) = delete;
-            filter &operator=(const filter&) = delete;
+            filter_view(Range&& range, const Pred &pred) noexcept : owning_view<Range>(std::forward<Range>(range)), _pred(pred) {}
+            filter_view(Range& range, const Pred &pred) noexcept : owning_view<Range>(std::move(range)), _pred(pred) {}
 
-            filter(filter &&rhs) noexcept : begin_it(rhs.begin_it), end_it(rhs.end_it) {};
-            filter &operator=(filter &&rhs) noexcept {
-                if (&rhs != this) {
-                    begin_it = rhs.begin_it;
-                    end_it = rhs.end_it;
+            filter_view(filter_view &&other) noexcept : owning_view<Range>(exchange(other._r, Range {})), _pred(exchange(other._pred, function_type {})) {}
+            filter_view &operator=(filter_view &&other) noexcept {
+                if (&other != this) {
+                    this->_r = exchange(other._r, Range {});
+                    this->_pred = exchange(other._pred, function_type {});
+                }
+
+                return *this;
+            }
+
+            filter_view(filter_view &) = delete;
+            filter_view &operator=(filter_view &) = delete;
+
+            iterator begin() noexcept { return iterator{this->_r.begin(), this->_r.end(), _pred}; }
+            iterator end() noexcept { return iterator{this->_r.end(), this->_r.end(), _pred}; }
+
+            constexpr const_iterator begin() const noexcept { return const_iterator{this->_r.begin(), this->_r.end(), _pred}; }
+            constexpr const_iterator end() const noexcept { return const_iterator{this->_r.end(), this->_r.end(), _pred}; }
+
+        private:
+            function_type _pred;
+        };
+        template<typename Range, typename Pred>
+        class filter_ref_view : public ref_view<Range> {
+            public:
+            using range_iterator_type = typename std::decay<Range>::type::iterator;
+            using range_const_iterator_type = typename std::decay<Range>::type::const_iterator;
+            using iterator = filter_iterator<range_iterator_type, Pred>;
+            using const_iterator = filter_iterator<range_const_iterator_type, Pred>;
+            using value_type = typename std::iterator_traits<iterator>::value_type;
+            using difference_type = typename std::iterator_traits<iterator>::difference_type;
+            using pointer = typename std::iterator_traits<iterator>::pointer;
+            using reference = typename std::iterator_traits<iterator>::reference;
+            using function_type = std::function<function_traits_s<Pred>>;
+
+            filter_ref_view() noexcept: ref_view<Range>(), _pred() {}
+            filter_ref_view(Range&& range, const Pred &pred) noexcept : ref_view<Range>(std::forward<Range>(range)), _pred(pred) {}
+            filter_ref_view(Range& range, const Pred &pred) noexcept : ref_view<Range>(std::move(range)), _pred(pred) {}
+
+            filter_ref_view(filter_ref_view &&other) noexcept : ref_view<Range>(exchange(other._r, nullptr)), _pred(exchange(other._pred, function_type {})) {}
+            filter_ref_view &operator=(filter_ref_view &&other) noexcept {
+                if (&other != this) {
+                    this->_r = exchange(other._r, nullptr);
+                    this->_pred = exchange(other._pred, function_type {});
+                }
+
+                return *this;
+            }
+
+            filter_ref_view(filter_ref_view &other) noexcept : ref_view<Range>(other._r), _pred(other._pred) {};
+            filter_ref_view &operator=(filter_ref_view &other) noexcept {
+                if (&other != this) {
+                    this->_r = other._r;
+                    this->_pred = other._pred;
                 }
 
                 return *this;
             };
 
-            filter(Range &range, const Pred &pred) noexcept:
-                begin_it(std::begin(range), std::end(range), pred), end_it(std::end(range), std::end(range), pred) {}
-            filter(Range &&range, const Pred &pred) noexcept (
-                std::is_nothrow_move_constructible<Range>::value &&
-                std::is_default_constructible<Range>::value
-                ): begin_it(std::begin(range), std::end(range), pred), end_it(std::end(range), std::end(range), pred) {}
+            iterator begin() noexcept { return iterator{this->_r->begin(), this->_r->end(), _pred}; }
+            iterator end() noexcept { return iterator{this->_r->end(), this->_r->end(), _pred}; }
 
-            iterator& begin() { return begin_it; }
-            iterator& end() { return end_it; }
-            iterator begin() const { return begin_it; }
-            iterator end() const { return end_it; }
+            constexpr const_iterator begin() const noexcept { return const_iterator{this->_r->begin(), this->_r->end(), _pred}; }
+            constexpr const_iterator end() const noexcept { return const_iterator{this->_r->end(), this->_r->end(), _pred}; }
+
 
         private:
-            iterator begin_it;
-            iterator end_it;
+            function_type _pred;
         };
 
 
@@ -265,29 +441,39 @@ namespace ranged {
             transform_iterator(transform_iterator &&other) noexcept (
                 std::is_nothrow_move_constructible<base_iterator>::value &&
                 std::is_default_constructible<base_iterator>::value
-                ) : current_(exchange(other.current_, base_iterator {})), end_(exchange(other.end_, base_iterator {})), pred_(exchange(other.pred_, function_type {})) {};
+                ) :
+#if __cplusplus >= 201304L
+            current_(std::exchange(other.current_, base_iterator {})), end_(std::exchange(other.end_, base_iterator {})), pred_(std::exchange(other.pred_, function_type {})) {};
+#else
+            current_(exchange(other.current_, base_iterator {})), end_(exchange(other.end_, base_iterator {})), pred_(exchange(other.pred_, function_type {})) {};
+#endif
             transform_iterator &operator=(transform_iterator &&other) noexcept (
                 std::is_nothrow_move_assignable<base_iterator>::value &&
                 std::is_default_constructible<base_iterator>::value
                 ) {
                 if (&other != this) {
+#if __cplusplus >= 201304L
+                    current_ = std::exchange(other.current_, base_iterator {});
+                    end_ = std::exchange(other.end_, base_iterator {});
+                    pred_ = std::exchange(other.pred_, function_type {});
+#else
+
                     current_ = exchange(other.current_, base_iterator {});
                     end_ = exchange(other.end_, base_iterator {});
                     pred_ = exchange(other.pred_, function_type {});
+#endif
                 }
 
                 return *this;
             }
 
-            template<typename I1, typename I2>
-            transform_iterator(I1 &&begin, I2 &&end, const Pred &pred) noexcept (
-                std::is_nothrow_move_constructible<I1>::value && std::is_nothrow_move_assignable<I2>::value &&
-                std::is_default_constructible<I1>::value && std::is_default_constructible<I2>::value
+            transform_iterator(Iter &&begin, Iter &&end, const Pred &pred) noexcept (
+                std::is_nothrow_constructible<Iter>::value
                 ) :
 #if __cplusplus >= 201304L
-                current_(std::exchange(begin, I1 {})), end_(std::exchange(end, I2 {})), pred_(pred) {}
+                current_(std::exchange(begin, Iter {})), end_(std::exchange(end, Iter {})), pred_(pred) {}
 #else
-                current_(exchange(begin, I1 {})), end_(exchange(end, I2 {})), pred_(pred) {}
+                current_(exchange(begin, Iter {})), end_(exchange(end, Iter {})), pred_(pred) {}
 #endif
 
             constexpr value_type operator*() const noexcept { return pred_(*current_); }
@@ -344,10 +530,7 @@ namespace ranged {
 
             transform(Range &range, const Pred &pred) noexcept:
                 begin_it(std::begin(range), std::end(range), pred), end_it(std::end(range), std::end(range), pred) {}
-            transform(Range &&range, const Pred &pred) noexcept (
-                std::is_nothrow_move_constructible<Range>::value &&
-                std::is_default_constructible<Range>::value
-                ): begin_it(std::begin(range), std::end(range), pred), end_it(std::end(range), std::end(range), pred) {}
+            transform(Range &&, const Pred &) = delete;
 
             iterator& begin() { return begin_it; }
             iterator& end() { return end_it; }
@@ -438,10 +621,7 @@ namespace ranged {
             zip(R1 &first_range, R2 &second_range) noexcept:
                 begin_it(std::begin(first_range), std::begin(second_range), std::end(first_range), std::end(second_range)), end_it(std::end(first_range), std::end(second_range), std::end(first_range), std::end(second_range)) {}
 
-            zip(R1 &&first_range, R2 &&second_range) noexcept (
-                std::is_default_constructible<R1>::value &&
-                std::is_default_constructible<R2>::value
-                ) : begin_it(std::begin(first_range), std::begin(second_range), std::end(first_range), std::end(second_range)), end_it(std::end(first_range), std::end(second_range), std::end(first_range), std::end(second_range)) {}
+            zip(R1 &&, R2 &&) = delete;
 
 
             iterator& begin() { return begin_it; }
@@ -456,45 +636,45 @@ namespace ranged {
 
     } // namespace _decl
 
-    template<_std_container_ T, typename Pred>
+    template<std_container T, typename Pred>
 #if __cplusplus >= 202002L && !(RANGED_NO_DEPRECATION_WARNINGS)
     [[deprecated("Preffer using `std::ranges::any_of` instead")]]
 #endif
     constexpr bool any(const T &container, const Pred &func);
-    template<_std_container_ T, typename Pred>
+    template<std_container T, typename Pred>
 #if __cplusplus >= 202002L && !(RANGED_NO_DEPRECATION_WARNINGS)
     [[deprecated("Preffer using `std::ranges::any_of` instead")]]
 #endif
     constexpr bool any(T &container, const Pred &func);
-    template<_std_container_ T, typename Pred>
+    template<std_container T, typename Pred>
 #if __cplusplus >= 202002L && !(RANGED_NO_DEPRECATION_WARNINGS)
     [[deprecated("Preffer using `std::ranges::all_of` instead")]]
 #endif
     constexpr bool all(const T &container, const Pred &func);
-    template<_std_container_ T, typename Pred>
+    template<std_container T, typename Pred>
 #if __cplusplus >= 202002L && !(RANGED_NO_DEPRECATION_WARNINGS)
     [[deprecated("Preffer using `std::ranges::all_of` instead")]]
 #endif
     constexpr bool all(T &container, const Pred &func);
-    template<_std_container_ T>
+    template<std_container T>
     constexpr bool contains(const T &container, const typename T::value_type &value);
-    template<_std_container_ T>
+    template<std_container T>
     constexpr bool contains(T &container, const typename T::value_type &value);
-    template<_std_container_ T, typename Func>
+    template<std_container T, typename Func>
 #if __cplusplus >= 202002L && !(RANGED_NO_DEPRECATION_WARNINGS)
     [[deprecated("Preffer using `std::ranges::for_each` instead")]]
 #endif
     constexpr void for_each(const T &container, const Func &func);
-    template<_std_container_ T, typename Func>
+    template<std_container T, typename Func>
 #if __cplusplus >= 202002L && !(RANGED_NO_DEPRECATION_WARNINGS)
     [[deprecated("Preffer using `std::ranges::for_each` instead")]]
 #endif
     constexpr void for_each(T &container, const Func &func);
-    template<_std_container_ T, typename Pred>
+    template<std_container T, typename Pred>
     constexpr typename T::value_type
     first_or_default(const T &container, const Pred &func,
                      const typename T::value_type &default_value = typename T::value_type());
-    template<_std_container_ T, typename Pred>
+    template<std_container T, typename Pred>
     constexpr typename T::value_type
     first_or_default(T &container, const Pred &func,
                      const typename T::value_type &default_value = typename T::value_type());
@@ -521,48 +701,57 @@ namespace ranged {
     [[deprecated("Preffer using `std::ranges::to` instead")]]
 #endif
     to(Tf &container);
-    template<std::size_t N, _std_container_ T>
+    template<std::size_t N, std_container T>
     constexpr std::array<typename T::value_type, N> to_array(T &container);
-    template<std::size_t N, _std_container_ T>
+    template<std::size_t N, std_container T>
     constexpr std::array<typename T::value_type, N> to_array(const T &container);
-    template<_std_container_ T, typename Pred>
+    template<std_container T, typename Pred>
     constexpr size_t count_if(const T &container, const Pred &func);
-    template<_std_container_ T, typename Pred>
+    template<std_container T, typename Pred>
     constexpr size_t count_if(T &container, const Pred &func);
-    template<_std_container_ T, typename Compare = std::less<typename T::value_type>>
+    template<std_container T, typename Compare = std::less<typename T::value_type>>
     constexpr typename T::value_type max(const T &container, const Compare &cmp = {});
-    template<_std_container_ T, typename Compare = std::less<typename T::value_type>>
+    template<std_container T, typename Compare = std::less<typename T::value_type>>
     constexpr typename T::value_type max(T &container, const Compare &cmp = {});
-    template<_std_container_ T, typename Compare = _decl::more<typename T::value_type>>
+    template<std_container T, typename Compare = more<typename T::value_type>>
     constexpr typename T::value_type min(const T &container, const Compare &cmp = {});
-    template<_std_container_ T, typename Compare = _decl::more<typename T::value_type>>
+    template<std_container T, typename Compare = more<typename T::value_type>>
     constexpr typename T::value_type min(T &container, const Compare &cmp = {});
 
-    template<_std_container_ T, class Inserter = std::conditional<_decl::has_reserve<T>::value, std::back_insert_iterator<T>, std::insert_iterator<T>>, typename ...Args>
+#if __cplusplus < 201703L
+    template<std_container T, class Inserter = typename std::conditional<has_reserve<typename std::decay<T>::type>::value, std::back_insert_iterator<typename std::decay<T>::type>, std::insert_iterator<typename std::decay<T>::type>>::type, typename ...Args>
+    constexpr void emplace_range(T &container, Args &&...args) = delete;
+#else
+    template<std_container T, class Inserter = typename std::conditional<_decl::has_reserve<typename std::decay<T>::type>::value, std::back_insert_iterator<typename std::decay<T>::type>, std::insert_iterator<typename std::decay<T>::type>>::type, typename ...Args>
     constexpr void emplace_range(T &container, Args &&...args);
+#endif
+    template<std_container T, class Inserter = typename std::conditional<has_reserve<typename std::decay<T>::type>::value, std::back_insert_iterator<typename std::decay<T>::type>, std::insert_iterator<typename std::decay<T>::type>>::type, typename Range>
+    constexpr void emplace_range(T &container, Range &&range);
+    template<class T, class Inserter = std::back_insert_iterator<T>>
+    constexpr void emplace_range(T &container, std::initializer_list<typename T::value_type> list);
 
-    template<_std_container_ T, typename Pred>
-    constexpr _decl::filter<T, Pred> filter(T &container, Pred func);
-    template<_std_container_ T, typename Pred>
-    constexpr _decl::filter<const T, Pred> filter(const T &container, Pred func);
+    template<std_container T, class Pred>
+    constexpr typename std::enable_if<is_bool_predicate<Pred>::value, views::filter_ref_view<const T, Pred>>::type filter(const T &container, const Pred &func);
+    template<std_container T, class Pred>
+    constexpr typename std::enable_if<is_bool_predicate<Pred>::value, views::filter_view<typename std::decay<T>::type, Pred>>::type filter(T &&container, const Pred &func);
     template<typename T, size_t N, typename Pred, class AllocT = std::allocator<T>>
-    constexpr std::vector<T> filter(const std::array<T, N> &array, Pred pred);
+    constexpr typename std::enable_if<is_bool_predicate<Pred>::value, std::vector<T>>::type filter(const std::array<T, N> &array, const Pred &func);
 
     template<template<typename...> class T, typename... Args, typename Pred>
 #if __cplusplus >= 202002L && !(RANGED_NO_DEPRECATION_WARNINGS)
     [[deprecated("Preffer using `std::ranges::transform` instead")]]
 #endif
-    constexpr _decl::transform<T<Args...>, Pred> transform(T<Args...> &container, const Pred &pred);
+    constexpr views::transform<T<Args...>, Pred> transform(T<Args...> &container, const Pred &pred);
     template<template<typename...> class T, typename... Args, typename Pred>
 #if __cplusplus >= 202002L && !(RANGED_NO_DEPRECATION_WARNINGS)
     [[deprecated("Preffer using `std::ranges::transform` instead")]]
 #endif
-    constexpr _decl::transform<const T<Args...>, Pred> transform(const T<Args...> &container, const Pred &pred);
+    constexpr views::transform<const T<Args...>, Pred> transform(const T<Args...> &container, const Pred &pred);
 
-    template<_std_container_ T, _std_container_ U>
-    constexpr _decl::zip<T, U> zip(T &first, U &second);
-    template<_std_container_ T, _std_container_ U>
-    constexpr _decl::zip<const T, const U> zip(const T &first, const U &second);
+    template<std_container T, std_container U>
+    constexpr views::zip<T, U> zip(T &first, U &second);
+    template<std_container T, std_container U>
+    constexpr views::zip<const T, const U> zip(const T &first, const U &second);
     template<template<typename, std::size_t> class Ta, typename T1, typename T2, std::size_t N>
     constexpr Ta<std::tuple<T1, T2>, N> zip(Ta<T1, N> &first, Ta<T2, N> &second);
     template<template<typename, std::size_t> class Ta, typename T1, typename T2, std::size_t N>
@@ -572,7 +761,7 @@ namespace ranged {
 #ifdef RANGED_IMPLEMENTATION
 
 
-    template<_std_container_ T, typename Pred>
+    template<std_container T, typename Pred>
     constexpr bool any(const T &container, const Pred &func) {
 #if __cplusplus >= 202002L
         return std::ranges::any_of(container, func);
@@ -585,7 +774,7 @@ namespace ranged {
         return false;
 #endif
     }
-    template<_std_container_ T, typename Pred>
+    template<std_container T, typename Pred>
     constexpr bool any(T &container, const Pred &func) {
 #if __cplusplus >= 202002L
         return std::ranges::any_of(container, func);
@@ -599,7 +788,7 @@ namespace ranged {
 #endif
     }
 
-    template<_std_container_ T, typename Pred>
+    template<std_container T, typename Pred>
     constexpr bool all(const T &container, const Pred &func) {
 #if __cplusplus >= 202002L
         return std::ranges::all_of(container, func);
@@ -612,7 +801,7 @@ namespace ranged {
         return true;
 #endif
     }
-    template<_std_container_ T, typename Pred>
+    template<std_container T, typename Pred>
     constexpr bool all(T &container, const Pred &func) {
 #if __cplusplus >= 202002L
         return std::ranges::all_of(container, func);
@@ -625,7 +814,7 @@ namespace ranged {
         return true;
 #endif
     }
-    template<_std_container_ T>
+    template<std_container T>
     constexpr bool contains(const T &container, const typename T::value_type &value) {
 #if __cplusplus >= 202002L
         return std::ranges::find(container, value) != container.end();
@@ -633,7 +822,7 @@ namespace ranged {
         return std::find(container.begin(), container.end(), value) != container.end();
 #endif
     }
-    template<_std_container_ T>
+    template<std_container T>
     constexpr bool contains(T &container, const typename T::value_type &value) {
 #if __cplusplus >= 202002L
         return std::ranges::find(container, value) != container.end();
@@ -641,7 +830,7 @@ namespace ranged {
         return std::find(container.begin(), container.end(), value) != container.end();
 #endif
     }
-    template<_std_container_ T, typename Func>
+    template<std_container T, typename Func>
     constexpr void for_each(const T &container, const Func &func) {
 #if __cplusplus >= 202002L
         std::ranges::for_each(container, func);
@@ -651,7 +840,7 @@ namespace ranged {
         }
 #endif
     }
-    template<_std_container_ T, typename Func>
+    template<std_container T, typename Func>
     constexpr void for_each(T &container, const Func &func) {
 #if __cplusplus >= 202002L
         std::ranges::for_each(container, func);
@@ -661,9 +850,8 @@ namespace ranged {
         }
 #endif
     }
-    template<_std_container_ T, typename Pred>
-    constexpr auto first_or_default(const T &container, const Pred &func, const typename T::value_type &default_value)
-            -> typename T::value_type {
+    template<std_container T, typename Pred>
+    constexpr typename T::value_type first_or_default(const T &container, const Pred &func, const typename T::value_type &default_value) {
         for (const auto &item: container) {
             if (func(item))
                 return item;
@@ -671,7 +859,7 @@ namespace ranged {
 
         return default_value;
     }
-    template<_std_container_ T, typename Pred>
+    template<std_container T, typename Pred>
     constexpr typename T::value_type first_or_default(T &container, const Pred &func,
                                                       const typename T::value_type &default_value) {
         for (const auto &item: container) {
@@ -701,7 +889,7 @@ namespace ranged {
         return Tt<typename std::decay<typename Tf::value_type::first_type>::type, typename Tf::value_type::second_type>(
                 std::begin(container), std::end(container));
     }
-    template<std::size_t N, _std_container_ T>
+    template<std::size_t N, std_container T>
     constexpr std::array<typename T::value_type, N> to_array(T &container) {
         std::array<typename T::value_type, N> result{};
         const size_t iter_to = std::min(N, container.size());
@@ -711,7 +899,7 @@ namespace ranged {
 
         return result;
     }
-    template<std::size_t N, _std_container_ T>
+    template<std::size_t N, std_container T>
     constexpr std::array<typename T::value_type, N> to_array(const T &container) {
         std::array<typename T::value_type, N> result{};
         const size_t iter_to = std::min(N, container.size());
@@ -721,7 +909,7 @@ namespace ranged {
 
         return result;
     }
-    template<_std_container_ T, typename Pred>
+    template<std_container T, typename Pred>
     constexpr size_t count_if(const T &container, const Pred &func) {
         size_t result{};
         for (const auto &item: container) {
@@ -731,7 +919,7 @@ namespace ranged {
 
         return result;
     }
-    template<_std_container_ T, typename Pred>
+    template<std_container T, typename Pred>
     constexpr size_t count_if(T &container, const Pred &func) {
         size_t result{};
         for (const auto &item: container) {
@@ -741,24 +929,29 @@ namespace ranged {
 
         return result;
     }
-    template<_std_container_ T, typename Pred>
-    constexpr _decl::filter<T, Pred> filter(T &container, Pred func) {
-        return _decl::filter<T, Pred>{container, func};
+    template<class T, class Pred>
+    constexpr
+            typename std::enable_if<is_bool_predicate<Pred>::value, views::filter_ref_view<const T, Pred>>::type
+            filter(const T &container, const Pred &func) {
+        return views::filter_ref_view<const T, Pred>{container, func};
     }
-    template<_std_container_ T, typename Pred>
-    constexpr _decl::filter<const T, Pred> filter(const T &container, Pred func) {
-        return _decl::filter<const T, Pred>{container, func};
+    template<class T, class Pred>
+    constexpr typename std::enable_if<is_bool_predicate<Pred>::value,
+                                      views::filter_view<typename std::decay<T>::type, Pred>>::type
+    filter(T &&container, const Pred &func) {
+        return views::filter_view<typename std::decay<T>::type, Pred>{std::forward<T>(container), func};
     }
-    template<typename  T, size_t N, typename Pred, class AllocT>
-    constexpr std::vector<T> filter(const std::array<T, N> &array, Pred pred) {
+    template<typename T, size_t N, typename Pred, class AllocT>
+    constexpr typename std::enable_if<is_bool_predicate<Pred>::value, std::vector<T>>::type
+    filter(const std::array<T, N> &array, const Pred &func) {
         std::vector<T, AllocT> result(N);
 #if __cplusplus >= 202002L
-        auto [in_it, out_it] = std::ranges::copy_if(array, result.begin(), pred);
+        auto [std::ignore, out_it] = std::ranges::copy_if(array, result.begin(), pred);
         result.resize(std::distance(result.begin(), out_it));
 #elif __cplusplus >= 201304L
         size_t i{0};
         for (size_t j{0}; j < N; ++j) {
-            if (pred(array.at(j))) {
+            if (func(array.at(j))) {
                 result[i] = array.at(j);
                 ++i;
             }
@@ -767,7 +960,7 @@ namespace ranged {
 #else
         size_t i{0};
         for (size_t j{0}; j < N; ++j) {
-            if (pred(array.at(j)))
+            if (func(array.at(j)))
                 result[i++] = array.at(j);
         }
         result.resize(i);
@@ -775,23 +968,23 @@ namespace ranged {
         return result;
     }
     template<template<typename...> class T, typename... Args, typename Pred>
-    constexpr _decl::transform<T<Args...>, Pred> transform(T<Args...> &container, const Pred &pred) {
-        return _decl::transform<T<Args...>, Pred>{container, pred};
+    constexpr views::transform<T<Args...>, Pred> transform(T<Args...> &container, const Pred &pred) {
+        return views::transform<T<Args...>, Pred>{container, pred};
     }
     template<template<typename...> class T, typename... Args, typename Pred>
-    constexpr _decl::transform<const T<Args...>, Pred> transform(const T<Args...> &container, const Pred &pred) {
-        return _decl::transform<const T<Args...>, Pred>{container, pred};
+    constexpr views::transform<const T<Args...>, Pred> transform(const T<Args...> &container, const Pred &pred) {
+        return views::transform<const T<Args...>, Pred>{container, pred};
     }
-    template<_std_container_ T, _std_container_ U>
-    constexpr _decl::zip<T, U> zip(T &first, U &second) {
+    template<std_container T, std_container U>
+    constexpr views::zip<T, U> zip(T &first, U &second) {
         if (first.size() != second.size())
             throw std::runtime_error("Containers cannot have different size.");
-        return _decl::zip<T, U>{first, second};
+        return views::zip<T, U>{first, second};
     }
-    template<_std_container_ T, _std_container_ U>
-    constexpr _decl::zip<const T, const U> zip(const T &first, const U &second) {
+    template<std_container T, std_container U>
+    constexpr views::zip<const T, const U> zip(const T &first, const U &second) {
         if (first.size() != second.size()) throw std::runtime_error("Containers cannot have different size.");
-        return _decl::zip<const T, const U>{first, second};
+        return views::zip<const T, const U>{first, second};
     }
     template<template<typename, std::size_t> class Ta, typename T1, typename T2, std::size_t N>
     constexpr Ta<std::tuple<T1, T2>, N> zip(Ta<T1, N> &first, Ta<T2, N> &second) {
@@ -820,7 +1013,7 @@ namespace ranged {
 
         return result;
     }
-    template<_std_container_ T, class Compare>
+    template<std_container T, class Compare>
     constexpr typename T::value_type max(const T &container, const Compare &cmp) {
         if (container.empty())
             return std::numeric_limits<typename T::value_type>::min();
@@ -835,7 +1028,7 @@ namespace ranged {
 
         return result;
     }
-    template<_std_container_ T, typename Compare>
+    template<std_container T, typename Compare>
     constexpr typename T::value_type max(T &container, const Compare &cmp) {
         if (container.empty())
             return std::numeric_limits<typename T::value_type>::min();
@@ -850,7 +1043,7 @@ namespace ranged {
 
         return result;
     }
-    template<_std_container_ T, typename Compare>
+    template<std_container T, typename Compare>
     constexpr typename T::value_type min(const T &container, const Compare &cmp) {
         if (container.empty())
             return std::numeric_limits<typename T::value_type>::max();
@@ -865,7 +1058,7 @@ namespace ranged {
 
         return result;
     }
-    template<_std_container_ T, typename Compare>
+    template<std_container T, typename Compare>
     constexpr typename T::value_type min(T &container, const Compare &cmp) {
         if (container.empty())
             return std::numeric_limits<typename T::value_type>::max();
@@ -880,13 +1073,26 @@ namespace ranged {
 
         return result;
     }
+#if __cplusplus >= 201703L
     template<class T, class Inserter, typename... Args>
     constexpr void emplace_range(T &container, Args &&...args) {
-        std::copy(std::begin(args...), std::end(args...), Inserter{container});
+        static_assert(_decl::has_emplace_back<std::decay_t<T>>::value && !std::is_const_v<T>);
+        (container.emplace_back(std::forward<Args>(args)), ...);
+    }
+#endif
+    template<class T, class Inserter, typename Range>
+    constexpr void emplace_range(T &container, Range &&range) {
+        static_assert(!std::is_const<T>::value, "Container cannot be const.");
+        std::copy(std::begin(std::forward<Range>(range)), std::end(std::forward<Range>(range)), Inserter{container});
+    }
+
+    template<class T, class Inserter>
+    constexpr void emplace_range(T &container, std::initializer_list<typename T::value_type> list) {
+        std::copy(list.begin(), list.end(), Inserter(container));
     }
 
 #endif
 
 } // namespace ranged
 
-#endif // FLUX_H
+#endif // RANGED_H

@@ -127,6 +127,21 @@ TEST(vector, to_unordered_set_test) {
     assert(result.size() == 10);
 }
 
+TEST(vector, emplace_range_test) {
+    std::vector<int> v = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+#if __cplusplus >= 201703L
+    ranged::emplace_range(v, 11, 12, 13, 16);
+#endif
+    ranged::emplace_range(v, {17, 18, 19, 20});
+
+#if __cplusplus >= 201703L
+    const auto expected = std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 16, 17, 18, 19, 20};
+#else
+    const auto expected = std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 17, 18, 19, 20};
+#endif
+    assert(v == expected);
+}
+
 TEST(deque, any_test) {
     const std::deque<int> d = {1, 2, 3, 4, 5, 6};
     assert(ranged::any(d, [](const int &x) { return x == 4; }));
@@ -179,7 +194,7 @@ TEST(deque, to_vector) {
 }
 
 TEST(deque, filter_test) {
-    const std::deque<int> d = {1, 2, 3, 4, 5, 6};
+    std::deque<int> d = {1, 2, 3, 4, 5, 6};
     const auto res = ranged::to<std::vector>(ranged::filter(d, std::function<bool(const int &)>([](const int &x) { return x > 3; })));
     assert(res.size() == 3);
     assert(res.at(0) == 4 && res.at(2) == 6);
@@ -206,7 +221,7 @@ TEST(deque, zip_test) {
 TEST(array, filter_test) {
     const std::array<int, 6> a = {{1, 2, 3, 4, 5, 6}};
     const std::vector<int> expected = {4, 5, 6};
-    const auto res = ranged::filter<int, 6>(a, [](const int &x) { return x > 3; });
+    const auto res = ranged::filter<int, 6>(a, [](const int &x) { return x >3; });
     assert(res == expected);
 }
 
@@ -248,7 +263,7 @@ TEST(set, first_or_default_test) {
 }
 
 TEST(set, filter_test) {
-    const std::set<int> s = {1, 2, 3, 4, 5};
+    std::set<int> s = {1, 2, 3, 4, 5};
     const auto filtered = ranged::to<std::set>(ranged::filter(s, [](const int &x) { return x >= 4; }));
     assert(filtered.size() == 2);
     assert(filtered.find(4) != filtered.end());
@@ -284,7 +299,7 @@ TEST(unordered_set, dummy_vector_count_if_test) {
 }
 
 TEST(unordered_set, filter_test) {
-    const std::unordered_set<int> s = {1, 2, 3, 4, 5};
+    std::unordered_set<int> s = {1, 2, 3, 4, 5};
     const auto filtered = ranged::to<std::unordered_set>(ranged::filter(s, [](const int &x) { return x < 3; }));
     assert(filtered.size() == 2);
     assert(filtered.find(1) != filtered.end());
@@ -341,7 +356,7 @@ TEST(map, first_or_default_test) {
 }
 
 TEST(map, filter_test) {
-    const std::map<std::string, int> m = {{"a", 1}, {"b", 2}, {"c", 3}};
+    std::map<std::string, int> m = {{"a", 1}, {"b", 2}, {"c", 3}};
     const auto filtered = ranged::to<std::map>(ranged::filter(m, [](const std::pair<const std::string, int> &p) { return p.second >= 2; }));
     assert(filtered.size() == 2);
     assert(filtered.find("b") != filtered.end());
@@ -370,7 +385,7 @@ TEST(unordered_map, dummy_vector_count_if_test) {
 }
 
 TEST(unordered_map, filter_test) {
-    const std::unordered_map<std::string, int> m = {{"x", 10}, {"y", 20}, {"z", 30}};
+    std::unordered_map<std::string, int> m = {{"x", 10}, {"y", 20}, {"z", 30}};
     const auto filtered = ranged::to<std::unordered_map>(ranged::filter(m, [](const std::pair<const std::string, int> &p) { return p.second > 10; }));
     assert(filtered.size() == 2);
     assert(filtered.find("y") != filtered.end());
@@ -411,7 +426,7 @@ TEST(list, first_or_default_test) {
 }
 
 TEST(list, filter_test) {
-    const std::list<int> l = {1, 2, 3, 4, 5};
+    std::list<int> l = {1, 2, 3, 4, 5};
     const auto filtered = ranged::to<std::list>(ranged::filter(l, [](const int &x) { return x % 2 == 0; }));
     assert(filtered.size() == 2);
 }
